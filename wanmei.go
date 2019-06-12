@@ -2,12 +2,19 @@ package wanmei
 
 import (
 	"errors"
+	"sync"
 	"syscall"
 	"unsafe"
 )
 
-type WanMeiLib struct {
+type wanMeiDLL struct {
 	dll *syscall.LazyDLL
+	loadWmFromFileEx,setWmOptionEx,
+	getImageFromFileEx,getImageFromBufferEx *syscall.LazyProc
+
+}
+type WanMeiLib struct {
+	libId uintptr
 }
 type WmOption struct {
 	RetType byte  //返回方式	取值范围：0～1   默认为0,直接返回验证码,为1返回验证码字符和矩形范围形如：
@@ -19,52 +26,70 @@ type WmOption struct {
 	MinSimilarity byte  //最小相似度	取值范围：0～100 默认为90 ,在go的实现中0同90,所以不允许出现0
 	CharSpace int  //字符间隙    取值范围：-10～0   默认为0,如果字符重叠,根据实际情况填写,如-3允许重叠3像素,如果不重叠的话,直接写0
 }
-func NewWmLibWithDLLPath(path ,password,dllpath string) (ret *WanMeiLib,err error) {
+var lock sync.Mutex=sync.Mutex{}
+var wmDll *wanMeiDLL=nil
+func LoadDll(path string) error {
+	lock.Lock()
+	defer lock.Unlock()
+	if wmDll==nil {
+		wmDll=new(wanMeiDLL)
+		wmDll.dll=syscall.NewLazyDLL(path)
+		ret:=wmDll.dll.Load()
+		if ret!=nil {
+			return ret
+		}
+		wmDll.getImageFromFileEx=wmDll.dll.NewProc("GetImageFromFileEx")
+		wmDll.getImageFromBufferEx=wmDll.dll.NewProc("GetImageFromBufferEx")
+		wmDll.loadWmFromFileEx=wmDll.dll.NewProc("LoadWmFromFileEx")
+		wmDll.setWmOptionEx=wmDll.dll.NewProc("SetWmOptionEx")
+	}
+	return nil
+}
+func NewWmLib(path ,password string) (ret *WanMeiLib,err error) {
+	if wmDll==nil {
+		LoadDll("WmCode.dll")
+	}
 	ret=new(WanMeiLib)
-	ret.dll=syscall.NewLazyDLL(dllpath)
-	LoadWmFromFile:=ret.dll.NewProc("LoadWmFromFile")
 	strPath:=append([]byte(path),0)
 	strPass:=append([]byte(password),0)
-	ok,_,_:=LoadWmFromFile.Call(uintptr(unsafe.Pointer(&strPath[0])),uintptr(unsafe.Pointer(&strPass[0])))
-	if ok==0 {
+	ret.libId,_,_=wmDll.loadWmFromFileEx.Call(uintptr(unsafe.Pointer(&strPath[0])),uintptr(unsafe.Pointer(&strPass[0])))
+	if int(ret.libId)==-1 {
 		return nil,errors.New("load wm file error!")
 	} else {
 		return ret,nil
 	}
 }
-func NewWmLib(path ,password string) (ret *WanMeiLib,err error) {
-	return NewWmLibWithDLLPath(path ,password,"WmCode.dll")
-}
+
 
 func (self *WanMeiLib) SetWmOption(op * WmOption){
-	setWmOption:=self.dll.NewProc("SetWmOption")
+	setWmOption:=wmDll.setWmOptionEx
 	if op.RetType!=0{
-		setWmOption.Call(1,uintptr(op.RetType))
+		setWmOption.Call(self.libId ,1,uintptr(op.RetType))
 	}
 	if op.SegmentationType!=0{
-		setWmOption.Call(2,uintptr(op.SegmentationType))
+		setWmOption.Call(self.libId ,2,uintptr(op.SegmentationType))
 	}
 	if op.RecogType!=0{
-		setWmOption.Call(3,uintptr(op.RecogType))
+		setWmOption.Call(self.libId ,3,uintptr(op.RecogType))
 	}
 	if op.AccelerationType!=0{
-		setWmOption.Call(4,uintptr(op.AccelerationType))
+		setWmOption.Call(self.libId ,4,uintptr(op.AccelerationType))
 	}
 	if op.AccelerationRet!=0{
-		setWmOption.Call(5,uintptr(op.AccelerationRet))
+		setWmOption.Call(self.libId ,5,uintptr(op.AccelerationRet))
 	}
 	if op.MinSimilarity!=0 && op.MinSimilarity!=90{
-		setWmOption.Call(6,uintptr(op.MinSimilarity))
+		setWmOption.Call(self.libId ,6,uintptr(op.MinSimilarity))
 	}
 	if op.CharSpace!=0{
-		setWmOption.Call(7,uintptr(op.CharSpace))
+		setWmOption.Call(self.libId ,7,uintptr(op.CharSpace))
 	}
 }
 func (self *WanMeiLib)  GetImageFromFile( filepath string) (ver string,err error){
-	getImageFromFile:=self.dll.NewProc("GetImageFromFile")
+	getImageFromFile:=wmDll.getImageFromFileEx
 	strbuf:=append([]byte(filepath),0)
 	retbuf:=make([]byte,5000,5000)
-	ok,_,_:=getImageFromFile.Call(uintptr(unsafe.Pointer(&strbuf[0])),uintptr(unsafe.Pointer(&retbuf[0])))
+	ok,_,_:=getImageFromFile.Call(self.libId ,uintptr(unsafe.Pointer(&strbuf[0])),uintptr(unsafe.Pointer(&retbuf[0])))
 	if ok==0 {
 		return "",errors.New("GetImageFromFile error")
 	}
@@ -79,9 +104,9 @@ func (self *WanMeiLib)  GetImageFromFile( filepath string) (ver string,err error
 	return string(retbuf),nil
 }
 func (self *WanMeiLib)  GetImageFromBuffer( buff []byte) (ver string,err error){
-	getImageFromBuffer:=self.dll.NewProc("GetImageFromBuffer")
+	getImageFromBuffer:=wmDll.getImageFromBufferEx
 	retbuf:=make([]byte,5000,5000)
-	ok,_,_:=getImageFromBuffer.Call(uintptr(unsafe.Pointer(&buff[0])),uintptr(len(buff)),uintptr(unsafe.Pointer(&retbuf[0])))
+	ok,_,_:=getImageFromBuffer.Call(self.libId ,uintptr(unsafe.Pointer(&buff[0])),uintptr(len(buff)),uintptr(unsafe.Pointer(&retbuf[0])))
 	if ok==0 {
 		return "",errors.New("GetImageFromBuffer error")
 	}
