@@ -3,8 +3,8 @@
 因原库只支持32位,因此请使用go386 编译
 ## 基本用法
 ``` go
-//x,err:=NewWmLib(识别文件目录,识别文件密码)  使用缺省本地wmcode.dll
-x,err:=NewWmLibWithDLLPath(识别文件目录,识别文件密码,dll文件位置)
+//err:=LoadDll(dll文件位置)  使用缺省本地wmcode.dll
+x,err:=NewWmLib(识别文件目录,识别文件密码)
 	if err!=nil{
 		panic("err!")
 	}

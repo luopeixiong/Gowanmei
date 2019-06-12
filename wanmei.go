@@ -47,7 +47,10 @@ func LoadDll(path string) error {
 }
 func NewWmLib(path ,password string) (ret *WanMeiLib,err error) {
 	if wmDll==nil {
-		LoadDll("WmCode.dll")
+		e:=LoadDll("WmCode.dll")
+		if e!=nil{
+			return nil,e
+		}
 	}
 	ret=new(WanMeiLib)
 	strPath:=append([]byte(path),0)
