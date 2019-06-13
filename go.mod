@@ -1,3 +1,3 @@
-module github.com/nowind/wanmei-go
+module github.com/nowind/Gowanmei
 
 go 1.12
